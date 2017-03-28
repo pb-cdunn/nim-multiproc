@@ -8,3 +8,6 @@ type
 proc newPool*(n: int): Pool =
   new(result)
   newSeq(result.forks, n)
+proc apply_async*(pool: Pool, f: proc()) =
+  echo "no way"
+  f()

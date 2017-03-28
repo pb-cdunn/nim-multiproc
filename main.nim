@@ -6,5 +6,6 @@ proc go() =
 proc main() =
   echo "hi"
   var pool = multiproc.newPool(1)
+  pool.apply_async(go)
 
 main()
