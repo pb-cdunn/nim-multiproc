@@ -1,0 +1,3 @@
+[submodule "msgpack4nim"]
+	path = msgpack4nim
+	url = https://github.com/jangko/msgpack4nim
