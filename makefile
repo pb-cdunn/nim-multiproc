@@ -15,5 +15,5 @@ run-%: %.exe
 %.exe: %.nim
 	nim ${NIMFLAGS} --out:$*.exe c $<
 clean:
-	${CLEAN_NIMCACHE}
+	rm -rf nimcache/
 	rm -f main.exe
