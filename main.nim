@@ -12,5 +12,8 @@ proc main() =
   #echo "result:", $result
 
   var rpool = multiproc.newRpcPool[int,int](1, go)
+  var call_result = multiproc.runParent[int,int](rpool.forks[0], 7)
+  echo "from child:", call_result
+  rpool.closePool()
 
 main()

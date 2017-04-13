@@ -16,7 +16,7 @@ type
     pipe_child2parent_rw: array[0..1, cint]
     pipe_parent2child_rw: array[0..1, cint]
   Pool = ref object
-    forks: seq[Fork]
+    forks*: seq[Fork]
 #type
   #RpcFork[TArg,TResult] = ref object
   #  pid: int
@@ -26,7 +26,7 @@ type
 
 proc err(msg: string) =
     raise newException(OSError, $posix.strerror(posix.errno) & ":" & msg)
-proc prepareChild(fork: var Fork) =
+proc prepareChild(fork: Fork) =
   # We are in the child.
   #posix.signal(posix.SIGINT, posix.SIG_DFL)
   #while true:
@@ -103,7 +103,7 @@ proc writeAll(fd: cint, start: pointer, nbytes: int) =
       os.raiseOsError("In writeAll(), fd was closed.")
     else:
       os.raiseOsError(os.OsErrorCode(posix.errno), "In writeAll(), ret < 0") # TODO: format
-proc runChild[TArg,TResult](fork: var Fork, f: proc(arg: TArg): TResult) =
+proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
   # We are in the child.
   #posix.signal(posix.SIGINT, posix.SIG_DFL)
   #  os.sleep(1000)
@@ -131,7 +131,7 @@ proc runChild[TArg,TResult](fork: var Fork, f: proc(arg: TArg): TResult) =
     writeAll(fork.pipe_child2parent_rw[1], addr msg_len, 8)
     echo "child sending msg_len=", msg_len
     writeAll(fork.pipe_child2parent_rw[1], cstring(msg), msg_len)
-proc runParent[TArg,TResult](fork: var Fork, arg: TArg): TResult =
+proc runParent*[TArg,TResult](fork: Fork, arg: TArg): TResult =
   # We are in the child.
   #posix.signal(posix.SIGINT, posix.SIG_DFL)
   var ret: int
@@ -167,14 +167,14 @@ proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
     discard posix.close(result.pipe_parent2child_rw[1]) # write end
     prepareChild(result)
     runChild[TArg,TResult](result, f)
-    system.quit(system.QuitSuccess)
+    system.quit(system.QuitFailure)
   elif pid > 0:
     echo "Parent forked:", pid
     result.pid = pid
     discard posix.close(result.pipe_parent2child_rw[0]) # read end
     discard posix.close(result.pipe_child2parent_rw[1]) # write end
-    var call_result = runParent[TArg,TResult](result, 7)
-    echo "from child:", call_result
+    #var call_result = runParent[TArg,TResult](result, 7)
+    #echo "from child:", call_result
   else:
     err("fork() failed:" & $pid)
 proc newRpcPool*[TArg,TResult](n: int, f: proc(arg: TArg): TResult): Pool =
@@ -183,8 +183,11 @@ proc newRpcPool*[TArg,TResult](n: int, f: proc(arg: TArg): TResult): Pool =
   for i in 0..<n:
     echo "i=", i
     result.forks[i] = newRpcFork[TArg,TResult](f)
+proc closePool*(pool: Pool) =
+  echo "closing pool"
+  for i in 0..<len(pool.forks):
     echo "finished newRpcFork for i=", i
-    discard posix.kill(result.forks[i].pid, posix.SIGTERM)
+    discard posix.kill(pool.forks[i].pid, posix.SIGTERM)
 proc apply_async*[TArg,TResult](pool: Pool, f: proc(arg: TArg): TResult, arg: TArg): TResult =
   var s = streams.newStringStream()
   echo "ser..."
