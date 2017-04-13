@@ -4,11 +4,13 @@ import asyncdispatch
 
 proc go(x: int): int =
   echo "hello:", x
-  return 42
+  return x*x
 proc main() =
   echo "hi"
-  var pool = multiproc.newPool(1)
-  var result = pool.apply_async(go, 1)
-  echo "result:", $result
+  #var pool = multiproc.newPool(1)
+  #var result = pool.apply_async(go, 1)
+  #echo "result:", $result
+
+  var rpool = multiproc.newRpcPool[int,int](1, go)
 
 main()
