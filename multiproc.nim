@@ -1,5 +1,6 @@
 # vim: sw=2 ts=2 sts=2 tw=80 et:
 from "msgpack4nim/msgpack4nim" as msgpack import nil
+from asyncdispatch import nil
 from streams import nil
 from posix import nil
 from os import nil
@@ -131,26 +132,29 @@ proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
     writeAll(fork.pipe_child2parent_rw[1], addr msg_len, 8)
     echo "child sending msg_len=", msg_len
     writeAll(fork.pipe_child2parent_rw[1], cstring(msg), msg_len)
-proc runParent*[TArg,TResult](fork: Fork, arg: TArg): TResult =
+proc runParent*[TArg,TResult](fork: Fork, arg: TArg): asyncdispatch.Future[TResult] =
+  var retFuture = asyncdispatch.newFuture[int]("multiproc.runParent")
   # We are in the child.
   #posix.signal(posix.SIGINT, posix.SIG_DFL)
   var ret: int
   var msg_len: int
   var msg: string
-  if true:
-    # send
-    msg = msgpack.pack(arg)
-    msg_len = len(msg)
-    writeAll(fork.pipe_parent2child_rw[1], addr msg_len, 8)
-    echo "parent sending msg_len=", msg_len
-    writeAll(fork.pipe_parent2child_rw[1], cstring(msg), msg_len)
-    # recv
-    readAll(fork.pipe_child2parent_rw[0], addr msg_len, 8)
-    assert sizeof(msg_len) == 8
-    msg.setLen(msg_len) # I think this avoids zeroing the string first.
-    echo "parent recving msg_len=", msg_len
-    readAll(fork.pipe_child2parent_rw[0], cstring(msg), msg_len)
-    msgpack.unpack(msg, result)
+  # send
+  msg = msgpack.pack(arg)
+  msg_len = len(msg)
+  writeAll(fork.pipe_parent2child_rw[1], addr msg_len, 8)
+  echo "parent sending msg_len=", msg_len
+  writeAll(fork.pipe_parent2child_rw[1], cstring(msg), msg_len)
+  # recv
+  readAll(fork.pipe_child2parent_rw[0], addr msg_len, 8)
+  assert sizeof(msg_len) == 8
+  msg.setLen(msg_len) # I think this avoids zeroing the string first.
+  echo "parent recving msg_len=", msg_len
+  readAll(fork.pipe_child2parent_rw[0], cstring(msg), msg_len)
+  var call_result: TResult
+  msgpack.unpack(msg, call_result)
+  asyncdispatch.complete(retFuture, call_result)
+  return retFuture
 proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
   new(result)
   block:
