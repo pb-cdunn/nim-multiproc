@@ -16,18 +16,18 @@ proc main() =
   #var result = pool.apply_async(go, 1)
   #echo "result:", $result
 
-  block:
+  if false:
     var rpool = multiproc.newRpcPool[int,int](1, go)
     try:
       var call_result = multiproc.runParent[int,int](rpool.forks[0], 7)
-      echo "from child:", asyncdispatch.waitFor call_result
+      echo "Final from child:", asyncdispatch.waitFor call_result
     finally:
       rpool.closePool()
-  block:
+  if true:
     var rpool = multiproc.newRpcPool[int,string](1, big)
     try:
-      var call_result = multiproc.runParent[int,string](rpool.forks[0], 2)
-      echo "from child: len=", len(asyncdispatch.waitFor call_result)
+      var call_result = multiproc.runParent[int,string](rpool.forks[0], 2_000_000)
+      echo "Final from child: len=", len(asyncdispatch.waitFor call_result)
     finally:
       rpool.closePool()
 

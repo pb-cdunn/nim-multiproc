@@ -95,12 +95,17 @@ proc readAll(fd: cint, start: pointer, nbytes: int): Future[void] =
       elif ret == 0:
         #os.raiseOsError("In readAll(), fd was closed.")
         echo "Read 0 bytes. Is that OK?" # TODO(CD): Remove.
+        return
       else:
         let err = os.osLastError()
+        echo "Error:" & os.osErrorMsg(err) & ":" & $err.int & ", result=" & $result & ", bytestogo=" & $(nbytes-bytesSoFar)
         if err.int32 != posix.EAGAIN:
           asyncdispatch.fail(retFuture, newException(OSError, "In readAll(), ret<0: " & os.osErrorMsg(err)))
+          #result = true # We still want this callback to be called.
         else:
           result = false # We still want this callback to be called.
+        return
+    echo "Completing retFuture, bytesSoFar=" & $bytesSoFar
     asyncdispatch.complete(retFuture)
 
   if not cb(fd.AsyncFD):
@@ -113,14 +118,38 @@ proc writeAll(fd: cint, start: pointer, nbytes: int) =
   var bytesSoFar: int = 0
   var current: ByteAddress = cast[ByteAddress](start)
   while bytesSoFar < nbytes:
-    ret = posix.write(fd, cast[pointer](current), nbytes)
+    ret = posix.write(fd, cast[pointer](current), nbytes-bytesSoFar)
     if ret > 0:
       bytesSoFar += ret
       current = current +% ret
     elif ret == 0:
       os.raiseOsError("In writeAll(), fd was closed.")
     else:
-      os.raiseOsError(os.OsErrorCode(posix.errno), "In writeAll(), ret < 0") # TODO: format
+      let err = os.osLastError()
+      if err.int32 != posix.EAGAIN:
+        os.raiseOsError(os.OsErrorCode(posix.errno), "In writeAll(), ret < 0") # TODO: format
+proc injectStacktrace[T](future: Future[T]) =
+  # TODO: Come up with something better.
+  var msg = ""
+  msg.add("\n  " & future.fromProc & "'s lead up to read of failed Future:")
+
+  if not future.errorStackTrace.isNil and future.errorStackTrace != "":
+    msg.add("\n" & future.errorStackTrace)
+  else:
+    msg.add("\n    Empty or nil stack trace.")
+  future.error.msg.add(msg)
+proc myasyncCheck*[T](future: Future[T]) =
+  ## Sets a callback on `future` which raises an exception if the future
+  ## finished with an error.
+  ##
+  ## This should be used instead of `discard` to discard void futures.
+  echo "myasynccheck adds a callback."
+  future.callback =
+    proc () =
+      echo "In myasynccheck cb, future.failed=" & $future.failed
+      if future.failed:
+        injectStacktrace(future)
+        raise future.error
 proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
   # We are in the child.
   #posix.signal(posix.SIGINT, posix.SIG_DFL)
@@ -131,13 +160,18 @@ proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
   while true:
     # recv
     try:
-      asyncCheck readAll(fork.pipe_parent2child_rw[0], addr msg_len, 8)
+      echo "child reading msg_len"
+      waitFor readAll(fork.pipe_parent2child_rw[0], addr msg_len, 8)
       assert sizeof(msg_len) == 8
       msg.setLen(msg_len) # I think this avoids zeroing the string first.
-      echo "child recving msg_len=", msg_len
-      asyncCheck readAll(fork.pipe_parent2child_rw[0], cstring(msg), msg_len)
+      echo "child recving msg of msg_len=", msg_len
+      waitFor readAll(fork.pipe_parent2child_rw[0], cstring(msg), msg_len)
+    except OsError:
+      echo "trapped exception in runChild():" & getCurrentExceptionMsg()
+      continue
     except:
-      echo "trapped exception in runChild()"
+      echo "trapped unknown exception in runChild()"
+      raise
     #var s = streams.newStringStream()
     #s.writeData(cstring(msg), msg_len)
     var call_arg: TArg
@@ -149,8 +183,9 @@ proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
     # send
     msg = msgpack.pack(call_result)
     msg_len = len(msg)
+    echo "child sending msg_len"
     writeAll(fork.pipe_child2parent_rw[1], addr msg_len, 8)
-    echo "child sending msg_len=", msg_len
+    echo "child sending msg of msg_len=", msg_len
     writeAll(fork.pipe_child2parent_rw[1], cstring(msg), msg_len)
 proc runParent*[TArg,TResult](fork: Fork, arg: TArg): Future[TResult] {.async.} =
   #var retFuture = asyncdispatch.newFuture[TResult]("multiproc.runParent")
@@ -162,14 +197,16 @@ proc runParent*[TArg,TResult](fork: Fork, arg: TArg): Future[TResult] {.async.} 
   # send
   msg = msgpack.pack(arg)
   msg_len = len(msg)
+  echo "parent sending msg_len"
   writeAll(fork.pipe_parent2child_rw[1], addr msg_len, 8)
-  echo "parent sending msg_len=", msg_len
+  echo "parent sending msg of msg_len=", msg_len
   writeAll(fork.pipe_parent2child_rw[1], cstring(msg), msg_len)
   # recv
+  echo "parent reading msg_len"
   await readAll(fork.pipe_child2parent_rw[0], addr msg_len, 8)
   assert sizeof(msg_len) == 8
   msg.setLen(msg_len) # I think this avoids zeroing the string first.
-  echo "parent recving msg_len=", msg_len
+  echo "parent recving msg of msg_len=", msg_len
   await readAll(fork.pipe_child2parent_rw[0], cstring(msg), msg_len)
   var call_result: TResult
   msgpack.unpack(msg, call_result)
@@ -185,19 +222,21 @@ proc setNonBlocking(fd: cint) {.inline.} =
     var mode = x or posix.O_NONBLOCK
     if posix.fcntl(fd, posix.F_SETFL, mode) == -1:
       os.raiseOSError(os.osLastError())
-proc setNonBlocking(fds: array[0..1, cint]) {.inline.} =
+proc prepareForDispatch(fds: array[0..1, cint]) {.inline.} =
   setNonBlocking(fds[0])
   setNonBlocking(fds[1])
+  asyncdispatch.register(fds[0].AsyncFD)
+  asyncdispatch.register(fds[1].AsyncFD)
 proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
   new(result)
   block:
     let ret = posix.pipe(result.pipe_child2parent_rw)
     assert ret == 0
-    setNonBlocking(result.pipe_child2parent_rw)
+    prepareForDispatch(result.pipe_child2parent_rw)
   block:
     let ret = posix.pipe(result.pipe_parent2child_rw)
     assert ret == 0
-    setNonBlocking(result.pipe_parent2child_rw)
+    prepareForDispatch(result.pipe_parent2child_rw)
   var pid = posix.fork()
   let word = "helloo"
   if pid == 0:
