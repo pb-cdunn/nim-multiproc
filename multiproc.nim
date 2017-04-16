@@ -177,14 +177,27 @@ proc runParent*[TArg,TResult](fork: Fork, arg: TArg): Future[TResult] {.async.} 
   #asyncdispatch.complete(retFuture, call_result)
   #return retFuture
   return call_result
+proc setNonBlocking(fd: cint) {.inline.} =
+  var x = posix.fcntl(fd, posix.F_GETFL, 0)
+  if x == -1:
+    os.raiseOSError(os.osLastError())
+  else:
+    var mode = x or posix.O_NONBLOCK
+    if posix.fcntl(fd, posix.F_SETFL, mode) == -1:
+      os.raiseOSError(os.osLastError())
+proc setNonBlocking(fds: array[0..1, cint]) {.inline.} =
+  setNonBlocking(fds[0])
+  setNonBlocking(fds[1])
 proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
   new(result)
   block:
     let ret = posix.pipe(result.pipe_child2parent_rw)
     assert ret == 0
+    setNonBlocking(result.pipe_child2parent_rw)
   block:
     let ret = posix.pipe(result.pipe_parent2child_rw)
     assert ret == 0
+    setNonBlocking(result.pipe_parent2child_rw)
   var pid = posix.fork()
   let word = "helloo"
   if pid == 0:
