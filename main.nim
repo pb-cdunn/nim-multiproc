@@ -23,7 +23,7 @@ proc main() =
     rpool.closePool()
   block:
     var rpool = multiproc.newRpcPool[int,string](1, big)
-    var call_result = multiproc.runParent[int,string](rpool.forks[0], 2)
+    var call_result = multiproc.runParent[int,string](rpool.forks[0], 20_000)
     echo "from child: len=", len(asyncdispatch.waitFor call_result)
     rpool.closePool()
 

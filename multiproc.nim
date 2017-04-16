@@ -144,7 +144,7 @@ proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
     msgpack.unpack(msg, call_arg)
     echo "child call_arg=", call_arg
     var call_result = f(call_arg)
-    echo "child call_result=", call_result
+    #echo "child call_result=", call_result
     #s.setPosition(0)
     # send
     msg = msgpack.pack(call_result)
