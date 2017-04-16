@@ -31,7 +31,7 @@ proc main() =
     finally:
       rpool.closePool()
   block:
-    const n = 5
+    const n = 2
     var rpool = multiproc.newRpcPool[int,string](n, big)
     var results: seq[asyncdispatch.Future[string]]
     newSeq(results, n)
