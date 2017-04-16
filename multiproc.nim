@@ -171,11 +171,12 @@ proc runParent*[TArg,TResult](fork: Fork, arg: TArg): Future[TResult] {.async.} 
   msg.setLen(msg_len) # I think this avoids zeroing the string first.
   echo "parent recving msg_len=", msg_len
   await readAll(fork.pipe_child2parent_rw[0], cstring(msg), msg_len)
-  #var call_result: TResult
-  #msgpack.unpack(msg, call_result)
-  msgpack.unpack(msg, result)
+  var call_result: TResult
+  msgpack.unpack(msg, call_result)
+  #msgpack.unpack(msg, result)
   #asyncdispatch.complete(retFuture, call_result)
   #return retFuture
+  return call_result
 proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
   new(result)
   block:
