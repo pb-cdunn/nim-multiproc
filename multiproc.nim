@@ -77,20 +77,36 @@ proc newPool*(n: int): Pool =
   for i in 0..<n:
     result.forks[i] = newFork()
 ################
-proc readAll(fd: cint, start: pointer, nbytes: int) =
-  # Either read nbytes, or raiseOsError.
-  var ret: int
+proc readAll(fd: cint, start: pointer, nbytes: int): Future[void] =
+  var retFuture = asyncdispatch.newFuture[void]("multiproc.readAll")
   var bytesSoFar: int = 0
   var current: ByteAddress = cast[ByteAddress](start)
-  while bytesSoFar < nbytes:
-    ret = posix.read(fd, cast[pointer](current), nbytes)
-    if ret > 0:
-      bytesSoFar += ret
-      current = current +% ret
-    elif ret == 0:
-      os.raiseOsError("In readAll(), fd was closed.")
-    else:
-      os.raiseOsError(os.OsErrorCode(posix.errno), "In readAll(), ret < 0") # TODO: format
+
+  proc cb(afd: asyncdispatch.AsyncFD): bool =
+    # Either read nbytes, or raiseOsError.
+    result = true # Tell dispatcher to stop calling this callback.
+
+    while bytesSoFar < nbytes:
+      var ret: int = posix.read(afd.cint, cast[pointer](current), nbytes)
+      if ret > 0:
+        bytesSoFar += ret
+        current = current +% ret
+        echo "Read " & $ret & " bytes. togo=" & $(nbytes-bytesSoFar)
+      elif ret == 0:
+        #os.raiseOsError("In readAll(), fd was closed.")
+        echo "Read 0 bytes. Is that OK?" # TODO(CD): Remove.
+      else:
+        let err = os.osLastError()
+        if err.int32 != posix.EAGAIN:
+          asyncdispatch.fail(retFuture, newException(OSError, "In readAll(), ret<0: " & os.osErrorMsg(err)))
+        else:
+          result = false # We still want this callback to be called.
+    asyncdispatch.complete(retFuture)
+
+  if not cb(fd.AsyncFD):
+    addRead(fd.AsyncFD, cb)
+  return retFuture
+
 proc writeAll(fd: cint, start: pointer, nbytes: int) =
   # Either write nbytes, or raiseOsError.
   var ret: int
@@ -114,11 +130,14 @@ proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
   var msg = newString(0)
   while true:
     # recv
-    readAll(fork.pipe_parent2child_rw[0], addr msg_len, 8)
-    assert sizeof(msg_len) == 8
-    msg.setLen(msg_len) # I think this avoids zeroing the string first.
-    echo "child recving msg_len=", msg_len
-    readAll(fork.pipe_parent2child_rw[0], cstring(msg), msg_len)
+    try:
+      asyncCheck readAll(fork.pipe_parent2child_rw[0], addr msg_len, 8)
+      assert sizeof(msg_len) == 8
+      msg.setLen(msg_len) # I think this avoids zeroing the string first.
+      echo "child recving msg_len=", msg_len
+      asyncCheck readAll(fork.pipe_parent2child_rw[0], cstring(msg), msg_len)
+    except:
+      echo "trapped exception in runChild()"
     #var s = streams.newStringStream()
     #s.writeData(cstring(msg), msg_len)
     var call_arg: TArg
@@ -147,11 +166,11 @@ proc runParent*[TArg,TResult](fork: Fork, arg: TArg): Future[TResult] {.async.} 
   echo "parent sending msg_len=", msg_len
   writeAll(fork.pipe_parent2child_rw[1], cstring(msg), msg_len)
   # recv
-  readAll(fork.pipe_child2parent_rw[0], addr msg_len, 8)
+  await readAll(fork.pipe_child2parent_rw[0], addr msg_len, 8)
   assert sizeof(msg_len) == 8
   msg.setLen(msg_len) # I think this avoids zeroing the string first.
   echo "parent recving msg_len=", msg_len
-  readAll(fork.pipe_child2parent_rw[0], cstring(msg), msg_len)
+  await readAll(fork.pipe_child2parent_rw[0], cstring(msg), msg_len)
   #var call_result: TResult
   #msgpack.unpack(msg, call_result)
   msgpack.unpack(msg, result)
