@@ -1,6 +1,7 @@
 # vim: sw=2 ts=2 sts=2 tw=80 et:
-import multiproc
 from asyncdispatch import nil
+import multiproc
+import asyncdispatch
 
 proc go(x: int): int =
   echo "hello:", x
