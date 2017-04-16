@@ -30,6 +30,17 @@ type
 
 proc err(msg: string) =
     raise newException(OSError, $posix.strerror(posix.errno) & ":" & msg)
+proc setNonBlocking(fd: cint) {.inline.} =
+  var x = posix.fcntl(fd, posix.F_GETFL, 0)
+  if x == -1:
+    os.raiseOSError(os.osLastError())
+  else:
+    var mode = x or posix.O_NONBLOCK
+    if posix.fcntl(fd, posix.F_SETFL, mode) == -1:
+      os.raiseOSError(os.osLastError())
+proc prepareForDispatch(fd: cint) {.inline.} =
+  setNonBlocking(fd)
+  asyncdispatch.register(fd.AsyncFD)
 proc prepareChild(fork: Fork) =
   # We are in the child.
   #posix.signal(posix.SIGINT, posix.SIG_DFL)
@@ -43,6 +54,11 @@ proc prepareChild(fork: Fork) =
     echo "Received SIGTERM" & $posix.getpid()
     #discard posix.kill(posix.getpid(), posix.SIGINT)
     system.quit(system.QuitSuccess)
+  prepareForDispatch(fork.pipe_parent2child_rw[0])
+  prepareForDispatch(fork.pipe_child2parent_rw[1])
+proc prepareParent(fork: Fork) =
+  prepareForDispatch(fork.pipe_parent2child_rw[1])
+  prepareForDispatch(fork.pipe_child2parent_rw[0])
 proc newFork(): Fork =
   new(result)
   block:
@@ -64,6 +80,7 @@ proc newFork(): Fork =
     echo "Parent forked:", pid
     result.pid = pid
     discard posix.close(result.pipe_child2parent_rw[1]) # write end
+    prepareParent(result)
     #while true:
     #  os.sleep(1000)
     #system.quit(system.QuitSuccess)
@@ -230,29 +247,14 @@ proc runParent*[TArg,TResult](fork: Fork, arg: TArg): Future[TResult] {.async.} 
   #asyncdispatch.complete(retFuture, call_result)
   #return retFuture
   return call_result
-proc setNonBlocking(fd: cint) {.inline.} =
-  var x = posix.fcntl(fd, posix.F_GETFL, 0)
-  if x == -1:
-    os.raiseOSError(os.osLastError())
-  else:
-    var mode = x or posix.O_NONBLOCK
-    if posix.fcntl(fd, posix.F_SETFL, mode) == -1:
-      os.raiseOSError(os.osLastError())
-proc prepareForDispatch(fds: array[0..1, cint]) {.inline.} =
-  setNonBlocking(fds[0])
-  setNonBlocking(fds[1])
-  asyncdispatch.register(fds[0].AsyncFD)
-  asyncdispatch.register(fds[1].AsyncFD)
 proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
   new(result)
   block:
     let ret = posix.pipe(result.pipe_child2parent_rw)
     assert ret == 0
-    prepareForDispatch(result.pipe_child2parent_rw)
   block:
     let ret = posix.pipe(result.pipe_parent2child_rw)
     assert ret == 0
-    prepareForDispatch(result.pipe_parent2child_rw)
   var pid = posix.fork()
   let word = "helloo"
   if pid == 0:
@@ -277,6 +279,9 @@ proc newRpcPool*[TArg,TResult](n: int, f: proc(arg: TArg): TResult): Pool =
   for i in 0..<n:
     echo "i=", i
     result.forks[i] = newRpcFork[TArg,TResult](f)
+  for i in 0..<n:
+    let fork = result.forks[i]
+    prepareParent(fork)
 proc closePool*(pool: Pool) =
   # Remember to call this (in a finally block) or you will have dangling
   # children in some errors.
