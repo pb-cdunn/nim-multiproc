@@ -31,7 +31,7 @@ proc main() =
     finally:
       rpool.closePool()
   block:
-    const n = 50
+    const n = 5
     var rpool = multiproc.newRpcPool[int,string](n, big)
     var results: seq[asyncdispatch.Future[string]]
     newSeq(results, n)
@@ -40,8 +40,8 @@ proc main() =
         var call_result = multiproc.runParent[int,string](rpool.forks[i], 10_000_000)
         results[i] = call_result
       for i in 0..<n:
-        let l = len(asyncdispatch.waitFor results[i])
-        echo "Final from child " & $i & ": len=" & $l
+        let length = len(asyncdispatch.waitFor results[i])
+        echo "Final from child " & $i & ": len=" & $length
     finally:
       rpool.closePool()
 
