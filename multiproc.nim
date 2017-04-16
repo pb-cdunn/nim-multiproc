@@ -223,6 +223,8 @@ proc newRpcPool*[TArg,TResult](n: int, f: proc(arg: TArg): TResult): Pool =
     echo "i=", i
     result.forks[i] = newRpcFork[TArg,TResult](f)
 proc closePool*(pool: Pool) =
+  # Remember to call this (in a finally block) or you will have dangling
+  # children in some errors.
   echo "closing pool"
   for i in 0..<len(pool.forks):
     echo "finished newRpcFork for i=", i

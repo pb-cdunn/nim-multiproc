@@ -18,13 +18,17 @@ proc main() =
 
   block:
     var rpool = multiproc.newRpcPool[int,int](1, go)
-    var call_result = multiproc.runParent[int,int](rpool.forks[0], 7)
-    echo "from child:", asyncdispatch.waitFor call_result
-    rpool.closePool()
+    try:
+      var call_result = multiproc.runParent[int,int](rpool.forks[0], 7)
+      echo "from child:", asyncdispatch.waitFor call_result
+    finally:
+      rpool.closePool()
   block:
     var rpool = multiproc.newRpcPool[int,string](1, big)
-    var call_result = multiproc.runParent[int,string](rpool.forks[0], 20_000)
-    echo "from child: len=", len(asyncdispatch.waitFor call_result)
-    rpool.closePool()
+    try:
+      var call_result = multiproc.runParent[int,string](rpool.forks[0], 2)
+      echo "from child: len=", len(asyncdispatch.waitFor call_result)
+    finally:
+      rpool.closePool()
 
 main()
