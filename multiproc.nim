@@ -9,7 +9,7 @@ from os import nil
 const debug = false
 
 # http://beej.us/guide/bgipc/output/html/singlepage/bgipc.html
-posix.signal(posix.SIGCHLD, posix.SIG_IGN) # Do not wait() for childs.
+#posix.signal(posix.SIGCHLD, posix.SIG_IGN) # Do not wait() for childs.
 #var sid = posix.setsid() # This could prevent us from hearing Ctrl-C, but makes
 #all sub-procs killable via 'kill -PID'
 
