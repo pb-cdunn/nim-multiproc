@@ -35,6 +35,7 @@ proc setNonBlocking(fd: cint) {.inline.} =
       os.raiseOSError(os.osLastError())
 
 proc prepareForDispatch(fd: cint) {.inline.} =
+  echo "prepareForDispatch fd:", fd
   setNonBlocking(fd)
   asyncdispatch.register(fd.AsyncFD)
 
@@ -51,12 +52,28 @@ proc prepareChild(fork: Fork) =
     echo "Received SIGTERM" & $posix.getpid()
     #discard posix.kill(posix.getpid(), posix.SIGINT)
     system.quit(system.QuitSuccess)
-  prepareForDispatch(fork.pipe_parent2child_rw[0])
+  echo "In prepareChild()"
+  echo " -Closing fds:", fork.pipe_child2parent_rw[0], " & ", fork.pipe_parent2child_rw[1]
+  discard posix.close(fork.pipe_child2parent_rw[0]) # read end
+  discard posix.close(fork.pipe_parent2child_rw[1]) # write end
   prepareForDispatch(fork.pipe_child2parent_rw[1])
+  prepareForDispatch(fork.pipe_parent2child_rw[0])
 
 proc prepareParent(fork: Fork) =
+  echo "In prepareParent()"
+  echo " Closing fds:", fork.pipe_child2parent_rw[1], " & ", fork.pipe_parent2child_rw[0]
+  discard posix.close(fork.pipe_parent2child_rw[0]) # read end
+  discard posix.close(fork.pipe_child2parent_rw[1]) # write end
   prepareForDispatch(fork.pipe_parent2child_rw[1])
   prepareForDispatch(fork.pipe_child2parent_rw[0])
+
+proc finishParent(fork: Fork) =
+  echo "unregistering in Parent..."
+  asyncdispatch.unregister(fork.pipe_parent2child_rw[1].AsyncFD)
+  asyncdispatch.unregister(fork.pipe_child2parent_rw[0].AsyncFD)
+  discard posix.close(fork.pipe_parent2child_rw[1]) # write end
+  discard posix.close(fork.pipe_child2parent_rw[0]) # read end
+  echo " Closed and unregistered fds:", fork.pipe_child2parent_rw[0], " & ", fork.pipe_parent2child_rw[1]
 
 proc readAll(fd: cint, start: pointer, nbytes: int): Future[void] =
   var retFuture = asyncdispatch.newFuture[void]("multiproc.readAll")
@@ -194,8 +211,6 @@ proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
   if pid == 0:
     when debug:
       echo "In child with pid:", posix().getpid
-    discard posix.close(result.pipe_child2parent_rw[0]) # read end
-    discard posix.close(result.pipe_parent2child_rw[1]) # write end
     prepareChild(result)
     runChild[TArg,TResult](result, f)
     system.quit(system.QuitFailure)
@@ -203,8 +218,6 @@ proc newRpcFork[TArg,TResult](f: proc(arg: TArg): TResult): Fork =
     when debug:
       echo "Parent forked child with pid:", pid
     result.pid = pid
-    discard posix.close(result.pipe_parent2child_rw[0]) # read end
-    discard posix.close(result.pipe_child2parent_rw[1]) # write end
   else:
     err("fork() failed:" & $pid)
 
