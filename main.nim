@@ -38,7 +38,7 @@ proc example3() =
       var call_result = multiproc.runParent[int,string](rpool.forks[i], 10_000_000)
       results[i] = call_result
     for i in 0..<n:
-      echo "waitFor result[", i, "]:", repr(results[i])
+      echo "waitFor result[", i, "]:", results[i].finished
       let length = len(asyncdispatch.waitFor results[i])
       echo "Final from child " & $i & ": len=" & $length
   finally:

@@ -1,4 +1,4 @@
-# vim: sw=2 ts=2 sts=2 tw=80 et:
+# vim: sw=2 ts=2 sts=2 tw=0 et:
 from "msgpack4nim/msgpack4nim" as msgpack import nil
 from asyncdispatch import nil
 import asyncdispatch
