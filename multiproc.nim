@@ -35,9 +35,14 @@ proc setNonBlocking(fd: cint) {.inline.} =
       os.raiseOSError(os.osLastError())
 
 proc prepareForDispatch(fd: cint) {.inline.} =
-  echo "prepareForDispatch fd:", fd
+  echo "prepareForDispatch (register and setNonBlocking) fd:", fd
   setNonBlocking(fd)
   asyncdispatch.register(fd.AsyncFD)
+
+proc close(fd: cint) =
+  let ret = posix.close(fd)
+  if ret != 0:
+    os.raiseOsError(os.osLastError())
 
 proc prepareChild(fork: Fork) =
   # We are in the child.
@@ -54,16 +59,16 @@ proc prepareChild(fork: Fork) =
     system.quit(system.QuitSuccess)
   echo "In prepareChild()"
   echo " -Closing fds:", fork.pipe_child2parent_rw[0], " & ", fork.pipe_parent2child_rw[1]
-  discard posix.close(fork.pipe_child2parent_rw[0]) # read end
-  discard posix.close(fork.pipe_parent2child_rw[1]) # write end
+  close(fork.pipe_child2parent_rw[0]) # read end
+  close(fork.pipe_parent2child_rw[1]) # write end
   prepareForDispatch(fork.pipe_child2parent_rw[1])
   prepareForDispatch(fork.pipe_parent2child_rw[0])
 
 proc prepareParent(fork: Fork) =
   echo "In prepareParent()"
   echo " Closing fds:", fork.pipe_child2parent_rw[1], " & ", fork.pipe_parent2child_rw[0]
-  discard posix.close(fork.pipe_parent2child_rw[0]) # read end
-  discard posix.close(fork.pipe_child2parent_rw[1]) # write end
+  close(fork.pipe_parent2child_rw[0]) # read end
+  close(fork.pipe_child2parent_rw[1]) # write end
   prepareForDispatch(fork.pipe_parent2child_rw[1])
   prepareForDispatch(fork.pipe_child2parent_rw[0])
 
@@ -71,8 +76,8 @@ proc finishParent(fork: Fork) =
   echo "unregistering in Parent..."
   asyncdispatch.unregister(fork.pipe_parent2child_rw[1].AsyncFD)
   asyncdispatch.unregister(fork.pipe_child2parent_rw[0].AsyncFD)
-  discard posix.close(fork.pipe_parent2child_rw[1]) # write end
-  discard posix.close(fork.pipe_child2parent_rw[0]) # read end
+  close(fork.pipe_parent2child_rw[1]) # write end
+  close(fork.pipe_child2parent_rw[0]) # read end
   echo " Closed and unregistered fds:", fork.pipe_child2parent_rw[0], " & ", fork.pipe_parent2child_rw[1]
 
 proc readAll(fd: cint, start: pointer, nbytes: int): Future[void] =
@@ -91,7 +96,7 @@ proc readAll(fd: cint, start: pointer, nbytes: int): Future[void] =
         current = current +% ret
         #echo "Read " & $ret & " bytes. togo=" & $(nbytes-bytesSoFar)
       elif ret == 0:
-        #os.raiseOsError("In readAll(), fd was closed.")
+        #os.raiseOsError(os.osLastError(), "In readAll(), fd was closed.")
         when debug:
           echo "Read 0 bytes. Is that OK?" # TODO(CD): Remove.
         return
@@ -124,11 +129,11 @@ proc writeAll(fd: cint, start: pointer, nbytes: int) =
       bytesSoFar += ret
       current = current +% ret
     elif ret == 0:
-      os.raiseOsError("In writeAll(), fd was closed.")
+      os.raiseOsError(os.osLastError(), "In writeAll(), fd was closed.")
     else:
       let err = os.osLastError()
       if err.int32 != posix.EAGAIN:
-        os.raiseOsError(os.OsErrorCode(posix.errno), "In writeAll(), ret < 0") # TODO: format
+        os.raiseOsError(err, "In writeAll(), ret < 0") # TODO: format
 
 proc runChild[TArg,TResult](fork: Fork, f: proc(arg: TArg): TResult) =
   # We are in the child.
@@ -229,6 +234,7 @@ proc newRpcPool*[TArg,TResult](n: int, f: proc(arg: TArg): TResult): Pool =
     result.forks[i] = newRpcFork[TArg,TResult](f)
   for i in 0..<n:
     let fork = result.forks[i]
+    echo "prepareParent for i=", i
     prepareParent(fork)
 
 proc closePool*(pool: Pool) =
@@ -241,6 +247,9 @@ proc closePool*(pool: Pool) =
   for i in 0..<len(pool.forks):
     echo "killing newRpcFork for i=", i
     discard posix.kill(pool.forks[i].pid, posix.SIGKILL)
+  for i in 0..<len(pool.forks):
+    echo "finishing newRpcFork for i=", i
+    finishParent(pool.forks[i])
   while asyncdispatch.hasPendingOperations():
     echo "Still pending..."
     try:
@@ -248,9 +257,6 @@ proc closePool*(pool: Pool) =
     except ValueError:
       err(getCurrentExceptionMsg())
   echo "Finished pending..."
-  for i in 0..<len(pool.forks):
-    echo "finishing newRpcFork for i=", i
-    finishParent(pool.forks[i])
 
 proc apply_async*[TArg,TResult](pool: Pool, f: proc(arg: TArg): TResult, arg: TArg): TResult =
   var s = streams.newStringStream()
