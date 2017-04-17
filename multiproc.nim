@@ -236,8 +236,21 @@ proc closePool*(pool: Pool) =
   # children in some errors.
   echo "closing Pool"
   for i in 0..<len(pool.forks):
-    echo "finished newRpcFork for i=", i
+    echo "terminating newRpcFork for i=", i
     discard posix.kill(pool.forks[i].pid, posix.SIGTERM)
+  for i in 0..<len(pool.forks):
+    echo "killing newRpcFork for i=", i
+    discard posix.kill(pool.forks[i].pid, posix.SIGKILL)
+  while asyncdispatch.hasPendingOperations():
+    echo "Still pending..."
+    try:
+      asyncdispatch.poll(500)
+    except ValueError:
+      err(getCurrentExceptionMsg())
+  echo "Finished pending..."
+  for i in 0..<len(pool.forks):
+    echo "finishing newRpcFork for i=", i
+    finishParent(pool.forks[i])
 
 proc apply_async*[TArg,TResult](pool: Pool, f: proc(arg: TArg): TResult, arg: TArg): TResult =
   var s = streams.newStringStream()
