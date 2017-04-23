@@ -278,10 +278,10 @@ proc closePool*(pool: Pool) =
     sendZero(pool.forks[i])
   for i in 0..<len(pool.forks):
     echo "terminating newRpcFork for i=", i
-    discard posix.kill(pool.forks[i].pid, posix.SIGTERM)
+    discard posix.kill(posix.Pid(pool.forks[i].pid), posix.SIGTERM)
   for i in 0..<len(pool.forks):
     echo "killing newRpcFork for i=", i
-    discard posix.kill(pool.forks[i].pid, posix.SIGKILL)
+    discard posix.kill(posix.Pid(pool.forks[i].pid), posix.SIGKILL)
   for i in 0..<len(pool.forks):
     echo "finishing newRpcFork for i=", i
     finishParent(pool.forks[i])
