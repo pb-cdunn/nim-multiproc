@@ -5,7 +5,7 @@ import multiproc
 import asyncdispatch
 from posix import nil
 
-const resettable = false
+const resettable = true
 
 proc square(x: int): int =
   echo "hello:", x
