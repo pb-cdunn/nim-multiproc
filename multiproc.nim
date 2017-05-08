@@ -5,6 +5,7 @@ import asyncdispatch
 from streams import nil
 from posix import nil
 from os import nil
+import strutils
 
 const debug = false
 

@@ -5,6 +5,7 @@ NIMFLAGS+=-d:debug
 #NIMFLAGS+=-d:release
 NIMFLAGS+=--tlsemulation:on
 #NIMFLAGS+=-d:debugHeapLinks
+#NIMFLAGS+=-d:nimDumpAsync
 
 run-main:
 do: main.exe
